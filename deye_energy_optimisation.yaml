@@ -1,0 +1,426 @@
+deye_energy_optimisation:
+  ####################################################################
+  # СЕНСОРИ ТА СТАТИСТИКА
+  ####################################################################
+  sensor:
+    - platform: statistics
+      name: deo_day_rate_mean_10d # sensor.deo_day_rate_mean_10d - Статистичне середнє: Вираховує середнє споживання будинку за останні 10 днів (на основі щоденних снапшотів)
+      entity_id: sensor.deo_day_energy_snapshot_diff
+      state_characteristic: mean
+      max_age:
+        days: 10
+
+  template:
+    - trigger:
+        - platform: time_pattern
+          hours: "/1"
+        - platform: homeassistant
+          event: start
+        - platform: event
+          event_type: "event_template_reloaded"
+      action:
+        - action: weather.get_forecasts
+          data:
+            type: daily
+          target:
+            entity_id: weather.forecast_home
+          response_variable: forecast_data
+      sensor:
+        - name: "DEO Tomorrow Wind Speed"
+          unique_id: deo_tomorrow_wind_speed # sensor.deo_tomorrow_wind_speed - Прогноз вітру: Витягує швидкість вітру на завтра з вашого метеосервісу.
+          unit_of_measurement: "m/s"
+          state: >
+            {% set entity = 'weather.forecast_home' %}
+            {% if forecast_data[entity] is defined and forecast_data[entity].forecast | length > 1 %}
+              {{ forecast_data[entity].forecast[1].wind_speed | float(0) }}
+            {% else %}
+              {{ states('sensor.deo_tomorrow_wind_speed') | default(0) }}
+            {% endif %}
+
+        - name: "DEO Tomorrow Rain"
+          unique_id: deo_tomorrow_rain # sensor.deo_tomorrow_rain - Прогноз опадів: Витягує кількість опадів на завтра
+          unit_of_measurement: "mm"
+          state: >
+            {% set entity = 'weather.forecast_home' %}
+            {% if forecast_data[entity] is defined and forecast_data[entity].forecast | length > 1 %}
+              {{ forecast_data[entity].forecast[1].precipitation | float(0) }}
+            {% else %}
+              {{ states('sensor.deo_tomorrow_rain') | default(0) }}
+            {% endif %}
+
+    - sensor:
+        - name: "DEO Day Energy Snapshot Diff"
+          unique_id: deo_day_energy_snapshot_diff # sensor.deo_day_energy_snapshot_diff -Денне споживання: Різниця між ранковим та вечірнім показником лічильника споживання
+          state: >
+            {% set morning = states('input_number.deo_energy_snapshot_morning') | float(0) %}
+            {% set evening = states('input_number.deo_energy_snapshot_evening') | float(0) %}
+            {% set diff = evening - morning %}
+            {{ max(diff, 0) | round(3) }}
+          unit_of_measurement: "kWh"
+          device_class: energy
+
+        - name: "DEO Deficit kWh"
+          unique_id: deo_deficit_kwh # sensor.deo_deficit_kwh - Дефіцит енергії: Скільки кВт⋅год вам не вистачатиме завтра (Середнє споживання мінус прогноз сонця з урахуванням запасу)
+          state: >
+            {# Вираховуємо необхідну #}
+            {% set mean10 = states('sensor.deo_day_rate_mean_10d') | float(0) %}
+            {% set min_safe = states('input_number.deo_min_safe_consumption') | float(15.0) %}
+            {% set mean_safe = max(mean10, min_safe) %}
+            {% set forecast = states('sensor.energy_production_tomorrow') | float(0) %}
+            {% set buffer = states('input_number.deo_forecast_buffer_percent') | float(10) / 100 %}
+            {% set result = mean_safe - (forecast * (1 - buffer)) %}
+            {{ max(result, 0) | round(2) }}
+          unit_of_measurement: "kWh"
+
+        - name: "DEO Required SOC Percent"
+          unique_id: deo_required_soc_percent # sensor.deo_required_soc_percent - Цільовий заряд: Фінальний розрахунок у %, до якого треба зарядити АКБ вночі, щоб вистачило до вечора
+          state: >
+            {# 1. Отримуємо вхідні дані #}
+            {% set deficit = states('sensor.deo_deficit_kwh') | float(0) %}
+            {% set total_capacity = states('input_number.deo_battery_capacity') | float(30.0) %}
+            {% set reserve_percent = states('input_number.deo_battery_reserve_soc') | float(15.0) %}
+            {% set min_night_soc = states('input_number.deo_min_soc') | float(30.0) %}
+
+            {# 2. Розраховуємо ефективну ємність (для "ваги" дефіциту) #}
+            {% set usable_kwh = total_capacity * (1 - (reserve_percent / 100)) %}
+
+            {# 3. Розраховуємо відсоток дефіциту відносно доступної ємності #}
+            {% set deficit_ratio = (deficit / usable_kwh) * 100 if usable_kwh > 0 else 0 %}
+
+            {# 4. Розрахунок SOC: Резерв + Дефіцит #}
+            {# Тут ми рахуємо "чесну" потребу: скільки треба зарядити понад недоторканний резерв #}
+            {% set calculated_soc = reserve_percent + deficit_ratio %}
+
+            {# 5. Запобіжник мінімального заряду акумулятора вночі #}
+            {# Якщо calculated_soc (напр. 20) менше за min_night_soc (напр. 30), функція max обере 30 #}
+            {% set final_soc = [calculated_soc, min_night_soc] | max %}
+
+            {# Обмежуємо зверху 100% та округлюємо #}
+            {{ min(final_soc | round(0), 100) | int }}
+          unit_of_measurement: "%"
+
+    - binary_sensor:
+        - name: "DEO Storm Mode"
+          unique_id: deo_storm_mode # binary_sensor.deo_storm_mode - Статус «Шторм»: Приймає значення on, якщо умови вітру/дощу перевищують пороги або увімкнено ручний режим шторму
+          state: >
+            {% if is_state('input_boolean.deo_force_storm_mode','on') %}
+              true
+            {% else %}
+              {% set wind = states('sensor.deo_tomorrow_wind_speed') | float(0) %}
+              {% set rain = states('sensor.deo_tomorrow_rain') | float(0) %}
+              {% set w_t = states('input_number.deo_storm_wind_threshold') | float(15) %}
+              {% set r_t = states('input_number.deo_storm_rain_threshold') | float(10) %}
+              {{ (wind >= w_t) or (rain >= r_t) }}
+            {% endif %}
+          device_class: safety
+
+  ####################################################################
+  # INPUT CONTROLS (Дашборд)
+  ####################################################################
+  input_boolean:
+    deo_force_storm_mode: # input_boolean.deo_force_storm_mode: Ручне увімкнення режиму шторму (зарядити на 100% негайно)
+      name: "Примусовий Шторм (DEO)"
+      initial: false
+    # Окремі перемикачі Grid для кожної програми - рівні SOC для денних програм, які система відновить після завершення шторму
+    deo_user_prog_2_chg_normal:
+      name: "Grid P2 (DEO)"
+      initial: false
+    deo_user_prog_3_chg_normal:
+      name: "Grid P3 (DEO)"
+      initial: false
+    deo_user_prog_4_chg_normal:
+      name: "Grid P4 (DEO)"
+      initial: false
+    deo_user_prog_5_chg_normal:
+      name: "Grid P5 (DEO)"
+      initial: false
+
+  input_number:
+    deo_battery_capacity: # input_number.deo_battery_capacity: Повна ємність вашої збірки АКБ у кВт⋅год (потрібно для переведення кВт⋅год дефіциту у відсотки SOC)
+      name: "Ємність АКБ (DEO)"
+      min: 5
+      max: 100
+      step: 0.1
+      initial: 30
+      unit_of_measurement: "kWh"
+    deo_min_soc:
+      name: "Мін. SOC ніч (DEO)"
+      min: 10
+      max: 100
+      step: 5
+      initial: 30
+    deo_forecast_buffer_percent: # input_number.deo_forecast_buffer_percent: Коефіцієнт недовіри до прогнозу (наприклад, 10% — це означає, що ми закладаємо, що сонця буде на 10% менше, ніж кажуть синоптики)
+      name: "Запас прогнозу (DEO)"
+      min: 0
+      max: 50
+      step: 1
+      initial: 10
+    deo_min_safe_consumption: # input_number.deo_min_safe_consumption: Гарантоване споживання. Якщо за 10 днів ви мало споживали, система все одно візьме це число за основу, щоб не лишитися з порожньою батареєю
+      name: "Гарантоване споживання (DEO)"
+      min: 5
+      max: 50
+      step: 1
+      initial: 15
+    deo_battery_reserve_soc: # input_number.deo_battery_reserve_soc: «Незнижуваний залишок» (Floor). Це значення, нижче якого ви взагалі не хочете розряджати батарею (наприклад, 15-20%)
+      name: "Резерв акумулятора (DEO)"
+      min: 10
+      max: 40
+      step: 5
+      initial: 20
+      unit_of_measurement: "%"
+      icon: mdi:battery-arrow-down-outline
+    # Окремі слайдери SOC для кожної програми
+    deo_user_prog_2_soc_normal:
+      name: "Норма SOC P2 (DEO)"
+      min: 10
+      max: 100
+      step: 1
+      initial: 20
+    deo_user_prog_3_soc_normal:
+      name: "Норма SOC P3 (DEO)"
+      min: 10
+      max: 100
+      step: 1
+      initial: 60
+    deo_user_prog_4_soc_normal:
+      name: "Норма SOC P4 (DEO)"
+      min: 10
+      max: 100
+      step: 1
+      initial: 60
+    deo_user_prog_5_soc_normal:
+      name: "Норма SOC P5 (DEO)"
+      min: 10
+      max: 100
+      step: 1
+      initial: 20
+    # Поріг вітру та дощу
+    deo_storm_wind_threshold: # input_number.deo_storm_wind_threshold: Поріг вітру, при якому автоматично вмикається Storm Mode
+      name: "Поріг вітру (DEO)"
+      min: 5
+      max: 35
+      step: 1
+      initial: 15
+    deo_storm_rain_threshold: # input_number.deo_storm_rain_threshold: Поріг опадів, при якому автоматично вмикається Storm Mode
+      name: "Поріг опадів (DEO)"
+      min: 1
+      max: 50
+      step: 1
+      initial: 10
+    # Снапшоти споживання
+    deo_energy_snapshot_morning: # input_number.deo_energy_snapshot_morning: Сюди записується показник лічильника на початку дня
+      min: 0
+      max: 100000
+      step: 0.001
+      mode: box
+    deo_energy_snapshot_evening: # input_number.deo_energy_snapshot_evening: Сюди записується показник ввечері, щоб порахувати, скільки енергії спожив будинок за світловий день
+      min: 0
+      max: 100000
+      step: 0.001
+      mode: box
+
+  ####################################################################
+  # АВТОМАТИЗАЦІЇ
+  ####################################################################
+  automation:
+    - alias: DEO Snapshot Morning  # снепшот лічильника споживання точно в моменти переходу між нічними та денними програмами інвертора
+      id: deo_snapshot_morning
+      trigger:
+      - platform: template
+        value_template: "{{ states('sensor.time') == states('time.deye12_program_2_time')[:5] }}"
+      action:
+        - action: input_number.set_value
+          target:
+            entity_id: input_number.deo_energy_snapshot_morning
+          data:
+            value: "{{ states('sensor.deye12_today_load_consumption') | float(0) }}"
+
+    - alias: DEO Snapshot Evening # снепшот лічильника споживання точно в моменти переходу між нічними та денними програмами інвертора
+      id: deo_snapshot_evening
+      trigger:
+      - platform: template
+        value_template: "{{ states('sensor.time') == states('time.deye12_program_6_time')[:5] }}"
+      action:
+        - action: input_number.set_value
+          target:
+            entity_id: input_number.deo_energy_snapshot_evening
+          data:
+            value: "{{ states('sensor.deye12_today_load_consumption') | float(0) }}"
+
+    - alias: DEO Storm Mode Activation # автоматизація при переході в режим шторм
+      id: deo_storm_mode_activation
+      trigger:
+        - platform: state
+          entity_id: binary_sensor.deo_storm_mode
+          from: "off"
+          to: "on"
+      action:
+        - action: number.set_value
+          target:
+            entity_id:
+              - number.deye12_program_1_soc
+              - number.deye12_program_2_soc
+              - number.deye12_program_3_soc
+              - number.deye12_program_4_soc
+              - number.deye12_program_5_soc
+              - number.deye12_program_6_soc
+          data:
+            value: 100
+        - action: select.select_option
+          target:
+            entity_id:
+              - select.deye12_program_1_charging
+              - select.deye12_program_2_charging
+              - select.deye12_program_3_charging
+              - select.deye12_program_4_charging
+              - select.deye12_program_5_charging
+              - select.deye12_program_6_charging
+          data:
+            option: "Grid"
+
+    - alias: DEO Restore After Storm # автоматизація повертає інвертор до ваших звичних налаштувань (SOC та режимів Grid/Disabled)
+      id: deo_restore_after_storm
+      trigger:
+        - platform: state
+          entity_id: binary_sensor.deo_storm_mode
+          to: "off"
+      action:
+        # Відновлення нічних програм
+        - action: select.select_option
+          target:
+            entity_id:
+              - select.deye12_program_1_charging
+              - select.deye12_program_6_charging
+          data:
+            option: "Grid"
+        - action: number.set_value
+          target:
+            entity_id:
+              - number.deye12_program_1_soc
+              - number.deye12_program_6_soc
+          data:
+            value: "{{ states('sensor.deo_required_soc_percent') | int(30) }}"
+
+        # ВІДНОВЛЕННЯ ДЕННИХ ПРОГРАМ (Кожна окремо)
+        # Програма 2
+        - action: select.select_option
+          target:
+            entity_id: select.deye12_program_2_charging
+          data:
+            option: "{{ 'Grid' if is_state('input_boolean.deo_user_prog_2_chg_normal', 'on') else 'Disabled' }}"
+        - action: number.set_value
+          target:
+            entity_id: number.deye12_program_2_soc
+          data:
+            value: "{{ states('input_number.deo_user_prog_2_soc_normal') | int }}"
+
+        # Програма 3
+        - action: select.select_option
+          target:
+            entity_id: select.deye12_program_3_charging
+          data:
+            option: "{{ 'Grid' if is_state('input_boolean.deo_user_prog_3_chg_normal', 'on') else 'Disabled' }}"
+        - action: number.set_value
+          target:
+            entity_id: number.deye12_program_3_soc
+          data:
+            value: "{{ states('input_number.deo_user_prog_3_soc_normal') | int }}"
+
+        # Програма 4
+        - action: select.select_option
+          target:
+            entity_id: select.deye12_program_4_charging
+          data:
+            option: "{{ 'Grid' if is_state('input_boolean.deo_user_prog_4_chg_normal', 'on') else 'Disabled' }}"
+        - action: number.set_value
+          target:
+            entity_id: number.deye12_program_4_soc
+          data:
+            value: "{{ states('input_number.deo_user_prog_4_soc_normal') | int }}"
+
+        # Програма 5
+        - action: select.select_option
+          target:
+            entity_id: select.deye12_program_5_charging
+          data:
+            option: "{{ 'Grid' if is_state('input_boolean.deo_user_prog_5_chg_normal', 'on') else 'Disabled' }}"
+        - action: number.set_value
+          target:
+            entity_id: number.deye12_program_5_soc
+          data:
+            value: "{{ states('input_number.deo_user_prog_5_soc_normal') | int }}"
+
+    - alias: DEO Evening Charge Planner # Головний мозок. Запускається ввечері, аналізує дефіцит на завтра і встановлює оптимальний рівень нічного заряду, після чого звітує вам у Telegram
+      id: deo_evening_charge_planner
+      trigger:
+      - platform: template
+        value_template: "{{ states('sensor.time') == states('time.deye12_program_6_time')[:5] }}"
+      action:
+        - delay: "00:01:00" # затримка 1 хв
+        - choose:
+            # 1. РЕЖИМ ШТОРМУ
+            - conditions:
+                - condition: state
+                  entity_id: binary_sensor.deo_storm_mode
+                  state: "on"
+              sequence:
+                - action: number.set_value
+                  target:
+                    entity_id:
+                      - number.deye12_program_1_soc
+                      - number.deye12_program_2_soc
+                      - number.deye12_program_3_soc
+                      - number.deye12_program_4_soc
+                      - number.deye12_program_5_soc
+                      - number.deye12_program_6_soc
+                  data:
+                    value: 100
+                - action: select.select_option
+                  target:
+                    entity_id:
+                      - select.deye12_program_1_charging
+                      - select.deye12_program_2_charging
+                      - select.deye12_program_3_charging
+                      - select.deye12_program_4_charging
+                      - select.deye12_program_5_charging
+                      - select.deye12_program_6_charging
+                  data:
+                    option: "Grid"
+
+            # 2. ШТАТНИЙ РЕЖИМ
+            - conditions:
+                - condition: state
+                  entity_id: binary_sensor.deo_storm_mode
+                  state: "off"
+              sequence:
+                - action: number.set_value
+                  target:
+                    entity_id:
+                      - number.deye12_program_1_soc
+                      - number.deye12_program_6_soc
+                  data:
+                    value: >
+                      {% set required = states('sensor.deo_required_soc_percent') | int(30) %}
+                      {% set current = states('sensor.deye12_battery') | int(0) %}
+                      {{ [required, current] | max }}
+
+        # 3. ЗВІТ TELEGRAM
+        - action: telegram_bot.send_message
+          data:
+            chat_id: !secret chat_id_channel
+            parse_mode: html
+            message: |
+              🧾 <b>ЗВІТ ЕНЕРГОСИСТЕМИ DEO</b>
+              {% if is_state('binary_sensor.deo_storm_mode', 'on') %}
+              🚨 <b>ШТОРМОВЕ ПОПЕРЕДЖЕННЯ!</b>
+              {% endif %}
+              🌪 Вітер: {{ states('sensor.deo_tomorrow_wind_speed') }} м/с
+              🌧 Опади: {{ states('sensor.deo_tomorrow_rain') }} мм
+
+              🔅 Прогноз сонця на завтра: {{ states('sensor.energy_production_tomorrow') }} kWh
+              ☀️ Вироблено сьогодні: {{ states('sensor.deye12_today_production') }} kWh
+              ⚡️ Спожито (день): {{ states('sensor.deo_day_energy_snapshot_diff') }} kWh
+              🔟 Середнє (10 днів): {{ max(states('sensor.deo_day_rate_mean_10d') | float(0), 15.0) | round(1) }} kWh
+              📉 Дефіцит: {{ states('sensor.deo_deficit_kwh') }} kWh
+              🔋 Залишок батареї зараз: {{ states('sensor.deye12_battery') }}%
+              ✅ Встановлений SOC на ніч (P1,P6): {{ [states('sensor.deo_required_soc_percent') | int(30), states('sensor.deye12_battery') | int(0)] | max }}%
