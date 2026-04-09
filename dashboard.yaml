@@ -1,0 +1,161 @@
+views:
+  - type: sections
+    title: Енергосистема
+    icon: mdi:lightning-bolt
+    max_columns: 2
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            grid_options:
+              columns: 1
+              rows: 1
+          - type: vertical-stack
+            cards:
+              - type: custom:mushroom-template-card
+                primary: Енергосистема Deye
+                secondary: |
+                  {% if is_state('binary_sensor.deo_storm_mode', 'on') %}
+                    ⚠️ РЕЖИМ ШТОРМУ АКТИВНИЙ
+                  {% else %}
+                    Система працює в штатному режимі
+                  {% endif %}
+                icon: mdi:solar-power-variant
+                icon_color: >-
+                  {{ 'red' if is_state('binary_sensor.deo_storm_mode', 'on')
+                  else 'green' }}
+                badge_icon: >-
+                  {{ 'mdi:alert' if is_state('binary_sensor.deo_storm_mode',
+                  'on') }}
+                badge_color: red
+              - type: custom:mushroom-entity-card
+                entity: input_boolean.deo_force_storm_mode
+                name: ПРИМУСОВИЙ ШТОРМ
+                icon: mdi:weather-dust
+                icon_color: red
+                switch_indicator: true
+              - type: horizontal-stack
+                cards:
+                  - type: custom:mushroom-entity-card
+                    entity: sensor.energy_production_tomorrow
+                    name: Сонце завтра
+                    icon_color: amber
+                  - type: custom:mushroom-entity-card
+                    entity: sensor.deo_day_rate_mean_10d
+                    name: Середнє за 10 днів
+                    icon_color: grey
+              - type: custom:mushroom-chips-card
+                chips:
+                  - type: entity
+                    entity: sensor.deo_tomorrow_wind_speed
+                    icon: mdi:weather-windy
+                    icon_color: light-blue
+                  - type: entity
+                    entity: sensor.deo_tomorrow_rain
+                    icon: mdi:weather-rainy
+                    icon_color: blue
+                  - type: template
+                    content: '{{ states(''sensor.deo_day_energy_snapshot_diff'') }} kWh'
+                    icon: mdi:transmission-tower
+                    icon_color: orange
+                    tap_action:
+                      action: more-info
+                    entity: sensor.deo_day_energy_snapshot_diff
+                alignment: center
+        column_span: 2
+      - type: grid
+        cards:
+          - type: vertical-stack
+            cards:
+              - type: custom:mushroom-title-card
+                title: Налаштування Time of Use
+                subtitle: Рівні розряду та режими зарядки для кожної програми окремо
+              - type: grid
+                columns: 2
+                square: false
+                cards:
+                  - type: custom:mushroom-number-card
+                    entity: input_number.deo_user_prog_2_soc_normal
+                    name: 'P2: SOC (%)'
+                    icon_color: cyan
+                    icon: mdi:numeric-2-circle
+                  - type: custom:mushroom-number-card
+                    entity: input_number.deo_user_prog_3_soc_normal
+                    name: 'P3: SOC (%)'
+                    icon_color: cyan
+                    icon: mdi:numeric-3-circle
+                  - type: custom:mushroom-number-card
+                    entity: input_number.deo_user_prog_4_soc_normal
+                    name: 'P4: SOC (%)'
+                    icon_color: cyan
+                    icon: mdi:numeric-4-circle
+                  - type: custom:mushroom-number-card
+                    entity: input_number.deo_user_prog_5_soc_normal
+                    name: 'P5: SOC (%)'
+                    icon_color: cyan
+                    icon: mdi:numeric-5-circle
+                  - type: custom:mushroom-entity-card
+                    entity: input_boolean.deo_user_prog_2_chg_normal
+                    name: 'P2: Grid Charge'
+                    icon: mdi:numeric-2-box
+                  - type: custom:mushroom-entity-card
+                    entity: input_boolean.deo_user_prog_3_chg_normal
+                    name: 'P3: Grid Charge'
+                    icon: mdi:numeric-3-box
+                  - type: custom:mushroom-entity-card
+                    entity: input_boolean.deo_user_prog_4_chg_normal
+                    name: 'P4: Grid Charge'
+                    icon: mdi:numeric-4-box
+                  - type: custom:mushroom-entity-card
+                    entity: input_boolean.deo_user_prog_5_chg_normal
+                    name: 'P5: Grid Charge'
+                    icon: mdi:numeric-5-box
+          - type: heading
+      - type: grid
+        cards:
+          - type: vertical-stack
+            cards:
+              - type: custom:mushroom-title-card
+                title: Системні параметри
+                subtitle: Пороги шторму та ємність
+              - type: custom:mushroom-template-card
+                primary: >-
+                  Цільовий заряд: {{ states('sensor.deo_required_soc_percent')
+                  }}%
+                secondary: >-
+                  Дефіцит: {{ states('sensor.deo_deficit_kwh') }} kWh |
+                  Прогноз: {{ states('sensor.energy_production_tomorrow') }} kWh
+                icon: mdi:battery-charging-100
+                icon_color: blue
+              - type: custom:mushroom-number-card
+                entity: input_number.deo_battery_reserve_soc
+                name: Резерв (Floor) %
+                icon_color: red
+                display_mode: slider
+              - type: grid
+                columns: 2
+                square: false
+                cards:
+                  - type: custom:mushroom-number-card
+                    entity: input_number.deo_battery_capacity
+                    name: Ємність АКБ (kWh)
+                    icon_color: green
+                    icon: mdi:battery-high
+                  - type: custom:mushroom-number-card
+                    entity: input_number.deo_min_soc
+                    name: Мін. SOC ніч (%)
+                    icon: mdi:battery-alert-variant
+                    icon_color: lime
+                  - type: custom:mushroom-number-card
+                    entity: input_number.deo_storm_wind_threshold
+                    name: Поріг вітру (м/с)
+                    icon: mdi:weather-windy
+                    icon_color: blue-grey
+                  - type: custom:mushroom-number-card
+                    entity: input_number.deo_storm_rain_threshold
+                    name: Поріг опадів (мм)
+                    icon: mdi:weather-pouring
+                    icon_color: light-blue
+      - type: grid
+        cards:
+          - type: heading
