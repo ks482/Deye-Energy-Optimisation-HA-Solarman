@@ -51,8 +51,10 @@
 3.  **Інтеграція погоди Met.no (https://www.home-assistant.io/integrations/met):** Служба погоди, що надає щоденний прогноз.
     
 4.  **Інтеграція Forecast Solar (https://www.home-assistant.io/integrations/forecast_solar):** Інтеграція для прогнозу генерації (сенсор `sensor.energy_production_tomorrow`).
+
+5.  **Інтеграція Time & Date (https://www.home-assistant.io/integrations/telegram_bot):** Для отримання часу початку і закінчення нічного тарифу (через сутності time.deye12_program_6_time (23:00) і time.deye12_program_2_time (07:00))
     
-5.  **Інтеграція Telegram Bot (https://www.home-assistant.io/integrations/telegram_bot):** Для отримання сповіщень.
+6.  **Інтеграція Telegram Bot (https://www.home-assistant.io/integrations/telegram_bot):** Для отримання сповіщень.
    
 7.  **Mushroom Cards (https://github.com/piitaya/lovelace-mushroom):** Колекція карток для інтерфейсу панелі керування
 
