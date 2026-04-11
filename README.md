@@ -27,7 +27,7 @@
 
 #### Штатний режим
 
-<img width="1387" height="870" alt="image" src="https://github.com/user-attachments/assets/2a30f16a-23e5-40f3-b3f8-45bbeede346b" />
+<img width="1081" height="902" alt="image" src="https://github.com/user-attachments/assets/c270b30c-c07b-4a14-8692-67300b49dad0" />
 
 <img width="643" height="794" alt="image" src="https://github.com/user-attachments/assets/8498e526-c2b3-4c52-9f74-9c61d85b3fcb" />
 
