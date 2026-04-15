@@ -139,9 +139,12 @@
 2.  Налаштуйте Time of Use інвертора:
     - час початку дії нічного тарифу - час ToU 6 (time.deye12_program_6_time)
     - час закінчення дії нічного тарифу - час ToU 2 (time.deye12_program_2_time)
+            <details>
+               <summary>Мої налашування ToU</summary>           
+               Мої налашування ToU (годинник на лічильнику спішить на 17 хвилин, ToU 6 = 23:20; ToU 2 = 07:15): 
+               ![img](https://github.com/user-attachments/assets/79ba5656-366a-4053-8345-910184cb19fe)
+            </details>
 
-    Мої налашування ToU (годинник на лічильнику спішить на 17 хвилин, ToU 6 = 23:20; ToU 2 = 07:15): 
-    <img width="1280" height="894" alt="image" src="https://github.com/user-attachments/assets/79ba5656-366a-4053-8345-910184cb19fe" />
 
 3.  Створіть ваш дашборд Lovelace для керування системою (наприклад, на основі файлу dashboard.yaml).
     
